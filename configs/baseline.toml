@@ -1,0 +1,53 @@
+# Baseline Configuration for 13F Top 50 Strategy
+
+[data]
+train_start = "2018-01-01"
+train_end = "2021-12-31"
+valid_end = "2022-12-31"
+test_end = "2024-12-31"
+universe_size = 50
+lookback_quarters = 8
+retrain_frequency = "180D"
+edgar_identity = "Quant Researcher research@antigravity.internal"
+
+[costs]
+commission_rate = 0.00025
+slippage_rate = 0.0004
+short_borrow_rate = 0.02
+margin_rate = 0.04
+
+[portfolio]
+top_k = 15
+bottom_m = 8
+bull_leverage = 1.25
+base_leverage = 1.0
+panic_scale = 0.50
+min_weight = 0.01
+max_single_weight = 0.20
+
+[model]
+hidden_dims = [128, 64]
+dropout = 0.1
+learning_rate = 0.001
+l1_turnover_weight = 0.05
+entropy_weight = 0.01
+batch_size = 32
+epochs = 20
+seed = 42
+
+[features]
+price_ratio_window = 20
+momentum_window = 5
+
+[dagger]
+rounds = 3
+disagreement_threshold = 0.08
+turnover_threshold = 0.30
+
+[reward]
+enabled = false
+reward_hidden_dim = 64
+max_kl = 0.02
+max_turnover = 0.25
+epochs = 15
+min_advantage = 0.05

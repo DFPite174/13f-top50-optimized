@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "top50-strategy"
+version = "0.1.0"
+description = "Modular Point-in-Time 13F Top50 Strategy Research System"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "torch>=2.0.0",
+    "yfinance>=0.2.0",
+    "edgartools>=2.0.0",
+    "matplotlib>=3.7.0"
+]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra -q --basetemp=artifacts/pytest_temp"
