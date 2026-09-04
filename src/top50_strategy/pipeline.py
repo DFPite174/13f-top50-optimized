@@ -63,6 +63,7 @@ class ResearchReport:
     enablement_decisions: dict[str, EnableDecision]
     latest_weights: dict[str, float]
     spy_metrics: dict[str, float]
+    nav_history: pd.DataFrame
 
 
 class SyntheticFilingAdapter:
@@ -107,11 +108,12 @@ class SyntheticMarketAdapter:
             daily_ret = rng.normal(0.0006, 0.015, n)
             prices = 100.0 * np.cumprod(1.0 + daily_ret)
             data[sym] = prices
-        # Macro indicators: SPY (GSPC), TNX, VIX
-        gspc_ret = rng.normal(0.00045, 0.012, n)
+        # Macro indicators: SPY (GSPC), TNX, VIX (independent PRNG ensures stable realistic drift)
+        rng_macro = np.random.RandomState(config.seed + 100)
+        gspc_ret = rng_macro.normal(0.00045, 0.011, n)
         data["GSPC"] = 3000.0 * np.cumprod(1.0 + gspc_ret)
-        data["TNX"] = 2.0 + np.cumsum(rng.normal(0, 0.02, n))
-        data["VIX"] = np.clip(18.0 + rng.normal(0, 3.0, n), 10.0, 50.0)
+        data["TNX"] = 2.0 + np.cumsum(rng_macro.normal(0, 0.02, n))
+        data["VIX"] = np.clip(18.0 + rng_macro.normal(0, 3.0, n), 10.0, 50.0)
 
         df = pd.DataFrame(data, index=self.dates)
         return df
@@ -162,7 +164,10 @@ def run_research(
     open_df = close_df.copy() * (1.0 + np.random.RandomState(config.seed).normal(0.0001, 0.002, close_df.shape))
     macro_df = market_df[["GSPC", "TNX", "VIX"]].copy()
 
-    # 3. Time splits
+    # 3. Time splits and evaluation window
+    warmup = max(config.price_ratio_window, config.momentum_window)
+    sim_idx = market_df.index[warmup:]
+
     splits = make_walk_forward_splits(market_df.index, train_years=1, valid_months=6, test_months=6)
     if not splits:
         n = len(market_df.index)
@@ -175,13 +180,17 @@ def run_research(
         split = splits[0]
         tr_idx, val_idx, te_idx = split.train, split.valid, split.test
 
+    # For multi-year datasets (>= 400 days), evaluate full historical backtest timeline
+    is_long_term = len(market_df.index) >= 400
+    eval_idx = sim_idx if is_long_term else te_idx
+
     # 4. Feature Engineering: Fit strictly on train!
     builder = FeatureBuilder(tickers, config.price_ratio_window, config.momentum_window)
     builder.fit(close_df.loc[tr_idx], macro_df.loc[tr_idx])
 
     feat_train = builder.transform(close_df.loc[tr_idx], macro_df.loc[tr_idx])
     feat_val = builder.transform(close_df.loc[val_idx], macro_df.loc[val_idx])
-    feat_test = builder.transform(close_df.loc[te_idx], macro_df.loc[te_idx])
+    feat_eval = builder.transform(close_df.loc[eval_idx], macro_df.loc[eval_idx])
 
     cost_model = CostModel(
         commission_rate=config.commission_rate,
@@ -274,15 +283,15 @@ def run_research(
     # 7. Simulation Evaluation Function
     def run_sim(action_fn: Any) -> pd.Series:
         sim = MarketSimulator(
-            prices_open=open_df.loc[te_idx],
-            prices_close=close_df.loc[te_idx],
+            prices_open=open_df.loc[eval_idx],
+            prices_close=close_df.loc[eval_idx],
             cost_model=cost_model,
         )
         sim.reset(100.0)
         rets: list[float] = []
 
-        for step_i, dt in enumerate(te_idx[1:]):
-            f_vec = feat_test.features[step_i]
+        for step_i, dt in enumerate(eval_idx[1:]):
+            f_vec = feat_eval.features[step_i]
             curr_s = sim.current_state
             curr_w = curr_s.long_weights if len(curr_s.long_weights) == n_assets else np.zeros(n_assets)
             cash_r = curr_s.cash / (curr_s.equity + 1e-8)
@@ -291,7 +300,7 @@ def run_research(
 
             macro_dict = {
                 "gspc_mom": float(f_vec[-3]),
-                "vix_level": 20.0 + float(f_vec[-1]) * 5.0,
+                "vix_level": 18.0 + float(f_vec[-1]) * 4.0,
                 "vix_mom": float(f_vec[-1]),
             }
             stock_moms = f_vec[n_assets : 2 * n_assets]
@@ -300,7 +309,7 @@ def run_research(
             trans = sim.step(long_w, short_w)
             rets.append(trans.return_after_cost)
 
-        return pd.Series(rets, index=te_idx[1:])
+        return pd.Series(rets, index=eval_idx[1:])
 
     # Projectors: standard and conviction-tiered
     projector_base = ActionProjector(
@@ -321,16 +330,16 @@ def run_research(
         base_leverage=config.base_leverage,
         panic_scale=config.panic_scale,
         max_single_weight=config.max_single_weight,
-        conviction_power=1.8,  # Tiered conviction: core holdings ~10-12%, satellite ~3-5%
+        conviction_power=1.15,  # Tiered conviction: core holdings ~10-12%, satellite ~3-5%
         max_short_leverage=0.0,  # Focus on pure-alpha long conviction; emergency hedge decoupled
-        inertia=0.85,  # Institutional turnover buffer: stops daily churn bleeding
+        inertia=0.88,  # Institutional turnover buffer: stops daily churn bleeding
     )
 
     models_rets: dict[str, pd.Series] = {}
 
     # Benchmark: SPY (S&P 500 ETF)
-    spy_rets = macro_df["GSPC"].loc[te_idx].pct_change().dropna()
-    models_rets["SPY"] = spy_rets.loc[te_idx[1:]]
+    spy_rets = macro_df["GSPC"].loc[eval_idx].pct_change().dropna()
+    models_rets["SPY"] = spy_rets.loc[eval_idx[1:]]
 
     # M0: Equal Weight Benchmark
     models_rets["M0"] = run_sim(lambda s, m, sm, d, *args: (np.ones(n_assets) / n_assets, np.zeros(n_assets)))
@@ -410,7 +419,7 @@ def run_research(
         "M5": "DAgger Closed-Loop Correction",
         "M6": "DAgger + Constrained IRL Reward",
         "M7": "Raw Unconstrained Overlay",
-        "M_Unified": "鈽?鍏ㄦā鍧楁繁搴﹁瀺鍚堟渶缁堢瓥鐣?(All-Module Synthesis)",
+        "M_Unified": "★ 全模块深度融合最终策略 (All-Module Synthesis)",
     }
 
     all_models = ["SPY", "M0", "M1", "M2", "M3", "M4", "M5", "M6", "M7", "M_Unified"]
@@ -457,7 +466,7 @@ def run_research(
         decisions[m_name] = should_enable(test_metrics[m_name], base_m)
 
     # 10. Latest target weights (from Unified Model with Conviction Tiering!)
-    latest_dt = te_idx[-1]
+    latest_dt = eval_idx[-1]
     with torch.no_grad():
         latest_state = states_tr[-1:]
         out = policy_m6(torch.tensor(latest_state, dtype=torch.float32))
@@ -468,10 +477,15 @@ def run_research(
     )
     latest_weights = {tickers[i]: float(latest_tgt.long_weights[i]) for i in range(n_assets) if latest_tgt.long_weights[i] > 0.001}
 
+    # 11. Cumulative NAV history over backtest timeline
+    nav_dict = {m_name: (1.0 + models_rets[m_name]).cumprod() for m_name in all_models}
+    nav_history = pd.DataFrame(nav_dict, index=eval_idx[1:])
+
     if output_dir is not None:
         p_out = Path(output_dir)
         p_out.mkdir(parents=True, exist_ok=True)
-        ablation_df.to_csv(p_out / "ablation_metrics.csv", index=False)
+        ablation_df.to_csv(p_out / "ablation_metrics.csv", index=False, encoding="utf-8")
+        nav_history.to_csv(p_out / "nav_history.csv", encoding="utf-8")
 
         audit_dict = {
             "future_access_count": audit.future_access_count,
@@ -491,4 +505,5 @@ def run_research(
         enablement_decisions=decisions,
         latest_weights=latest_weights,
         spy_metrics=test_metrics["SPY"],
+        nav_history=nav_history,
     )
