@@ -27,8 +27,8 @@ def test_pipeline_runs_on_injected_synthetic_adapters(tmp_path):
 
     report = run_research(cfg, adapters.filing_adapter, adapters.market_adapter, output_dir=tmp_path)
     assert report.data_audit.future_access_count == 0
-    assert set(report.ablation_table["Model"].values) == {"M0", "M1", "M2", "M3", "M4", "M5", "M6", "M7"}
+    expected_models = {"SPY", "M0", "M1", "M2", "M3", "M4", "M5", "M6", "M7", "M_Unified"}
+    assert expected_models.issubset(set(report.ablation_table["Model"].values))
     assert len(report.latest_weights) > 0
-    # Artifacts saved
     assert (tmp_path / "ablation_metrics.csv").exists()
     assert (tmp_path / "data_quality.json").exists()

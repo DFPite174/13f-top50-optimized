@@ -1,9 +1,11 @@
-Model,Description,Annual Return,Volatility,Sharpe,Sortino,Max Drawdown,Calmar,Win Rate,Final NAV
-M0,Equal Weight Benchmark,8.51%,3.22%,2.02,3.55,-0.95%,8.93,54.62%,1.0430
-M1,Dual Expert (Raw 13F Blend),11.26%,3.77%,2.46,4.17,-1.42%,7.93,56.92%,1.0566
-M2,Dual Expert + Macro Regime Gate,10.78%,4.23%,2.07,3.53,-1.65%,6.52,52.31%,1.0542
-M3,Behavior Cloning (BC) Policy,10.02%,3.58%,2.24,3.80,-1.36%,7.36,56.92%,1.0505
-M4,BC + L1 Turnover Penalty,8.46%,3.23%,2.00,3.51,-0.96%,8.83,54.62%,1.0428
-M5,DAgger Closed-Loop Correction,8.46%,3.23%,2.00,3.51,-0.96%,8.83,54.62%,1.0428
-M6,DAgger + Constrained IRL Reward,8.46%,3.23%,2.00,3.51,-0.96%,8.83,54.62%,1.0428
-M7,Full Dynamic Overlay (TopK + BottomM),-8.31%,199.15%,-0.05,-0.07,-34.53%,-0.24,44.62%,0.9563
+Model,Description,Annual Return,Volatility,Sharpe,Sortino,Max Drawdown,Calmar,Win Rate,Beta vs SPY,Alpha vs SPY,Final NAV
+SPY,S&P 500 ETF (Market Benchmark),-4.42%,20.40%,-0.31,-0.52,-18.39%,-0.24,48.46%,1.00,0.00%,0.9769
+M0,Equal Weight Benchmark (Top50),8.51%,3.22%,2.02,3.55,-0.96%,8.90,54.62%,0.02,6.64%,1.0430
+M1,Dual Expert (Raw 13F Blend),11.00%,4.07%,2.21,3.82,-1.90%,5.78,54.62%,0.02,9.15%,1.0553
+M2,Dual Expert + Macro Regime Gate,10.43%,4.04%,2.08,3.57,-1.90%,5.50,54.62%,0.02,8.57%,1.0525
+M3,Behavior Cloning (BC) Policy,9.74%,3.62%,2.14,3.90,-1.61%,6.04,55.38%,0.02,7.87%,1.0491
+M4,BC + L1 Turnover Penalty,8.49%,3.22%,2.02,3.52,-0.95%,8.95,53.85%,0.02,6.62%,1.0429
+M5,DAgger Closed-Loop Correction,8.49%,3.22%,2.02,3.52,-0.95%,8.95,53.85%,0.02,6.62%,1.0429
+M6,DAgger + Constrained IRL Reward,8.49%,3.22%,2.02,3.52,-0.95%,8.95,53.85%,0.02,6.62%,1.0429
+M7,Raw Unconstrained Overlay,-12.88%,5.09%,-2.92,-3.91,-7.07%,-1.82,43.08%,0.00,-14.85%,0.9314
+M_Unified,鈽?鍏ㄦā鍧楁繁搴﹁瀺鍚堟渶缁堢瓥鐣?(All-Module Synthesis),-4.33%,4.12%,-1.54,-1.94,-4.22%,-1.03,51.54%,-0.01,-6.39%,0.9774

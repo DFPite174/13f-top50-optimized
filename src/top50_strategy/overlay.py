@@ -27,6 +27,9 @@ class ActionProjector:
         base_leverage: float = 1.0,
         panic_scale: float = 0.50,
         max_single_weight: float = 0.20,
+        conviction_power: float = 1.0,
+        max_short_leverage: float = 0.10,
+        inertia: float = 0.0,
     ) -> None:
         self.tickers = tuple(tickers)
         self.top_k = min(top_k, len(self.tickers))
@@ -35,6 +38,9 @@ class ActionProjector:
         self.base_leverage = base_leverage
         self.panic_scale = panic_scale
         self.max_single_weight = max_single_weight
+        self.conviction_power = conviction_power
+        self.max_short_leverage = max_short_leverage
+        self.inertia = inertia
 
     def project(
         self,
@@ -42,6 +48,7 @@ class ActionProjector:
         exposure: float,
         macro: Mapping[str, float],
         stock_moms: np.ndarray,
+        prev_weights: np.ndarray | None = None,
     ) -> TargetAction:
         n_assets = len(self.tickers)
         p_weights = np.asarray(policy_weights, dtype=float)
@@ -50,11 +57,11 @@ class ActionProjector:
         vix_level = float(macro.get("vix_level", 20.0))
         vix_mom = float(macro.get("vix_mom", 0.0))
 
-        # 1. Top-K Long Allocation
+        # 1. Top-K Long Allocation with Conviction Sizing
         s_idx = np.argsort(p_weights)
         t_idx = s_idx[-self.top_k :]
 
-        # Determine macro long scaling
+        # Macro long scaling
         is_bull = (gspc_mom > 0.02) and (vix_level < 18.0)
         is_panic = (gspc_mom < -0.03) or (vix_level > 28.0) or (vix_mom > 0.20)
 
@@ -68,32 +75,44 @@ class ActionProjector:
         effective_exposure = exposure * (long_scale / self.base_leverage)
 
         top_w = p_weights[t_idx]
-        top_sum = float(np.sum(top_w))
-        top_norm = top_w / (top_sum + 1e-8) if top_sum > 0 else np.ones(len(t_idx)) / len(t_idx)
+        if self.conviction_power > 1.0:
+            # Exponential rank tiering for realistic institutional conviction (Core ~10-12%, Satellite ~2-4%)
+            ranks = np.arange(len(top_w))
+            decay = np.exp(0.10 * self.conviction_power * ranks)
+            top_norm = decay / np.sum(decay)
+        else:
+            top_sum = float(np.sum(top_w))
+            top_norm = top_w / (top_sum + 1e-8) if top_sum > 0 else np.ones(len(t_idx)) / len(t_idx)
 
-        long_weights = np.zeros(n_assets)
-        long_weights[t_idx] = np.minimum(effective_exposure * top_norm, self.max_single_weight)
+        raw_long = np.zeros(n_assets)
+        raw_long[t_idx] = np.minimum(effective_exposure * top_norm, self.max_single_weight)
 
-        # 2. Independent Bottom-M Short Hedging (Decoupled from Long Softmax)
+        # Turnover inertia smoothing: prevents destructive daily churn
+        if self.inertia > 0 and prev_weights is not None and len(prev_weights) == n_assets and np.sum(prev_weights) > 0:
+            long_weights = (1.0 - self.inertia) * raw_long + self.inertia * prev_weights
+            # Renormalize to match target exposure
+            tot = float(np.sum(long_weights))
+            if tot > 1e-6:
+                long_weights = long_weights * (effective_exposure / tot)
+        else:
+            long_weights = raw_long
+
+        # 2. Guarded Independent Bottom-M Short Hedging
         short_weights = np.zeros(n_assets)
-        hedge_trigger = (gspc_mom < -0.015) or (vix_level > 24.0) or (gspc_mom < 0.0 and vix_mom > 0.12)
+        hedge_trigger = (gspc_mom < -0.035 and vix_level > 28.0) or (gspc_mom < -0.02 and vix_mom > 0.25)
 
-        if hedge_trigger and self.bottom_m > 0:
-            short_lev = 0.32 if vix_level > 28.0 else 0.20
-            # Strict qualification for shorting:
-            # - Not in protected assets
-            # - Absolute negative momentum
-            # - Underperforming the index
+        if hedge_trigger and self.bottom_m > 0 and self.max_short_leverage > 0:
+            short_lev = min(self.max_short_leverage, 0.06 if vix_level > 32.0 else 0.04)
+            # Strict qualification for shorting: genuine crash deterioration
             qualifying = [
                 idx
                 for idx in s_idx
                 if self.tickers[idx] not in PROTECTED_DEFENSIVE_ASSETS
-                and stock_moms[idx] < 0.0
+                and stock_moms[idx] < -0.03
                 and stock_moms[idx] < gspc_mom
             ]
 
             if qualifying:
-                # Select up to bottom_m candidates with lowest policy support
                 b_cand = qualifying[: self.bottom_m]
                 cand_w = p_weights[b_cand]
                 c_sum = float(np.sum(cand_w))

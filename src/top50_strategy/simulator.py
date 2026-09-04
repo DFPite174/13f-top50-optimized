@@ -138,8 +138,10 @@ class MarketSimulator:
         comm, slip = self.cost_model.calculate_trade_costs(traded_volume)
 
         # 3. Cash balance adjustment after opening trades
-        # Long purchase requires cash, short sale provides cash buffer
-        cash_after_trades = prev_s.cash - float(np.sum(target_long_val - val_long_at_open)) - (comm + slip)
+        # Long purchase requires cash, long sale gives cash
+        # Short sale provides cash, short cover requires cash
+        net_cash_flow = -float(np.sum(target_long_val - val_long_at_open)) - float(np.sum(target_short_val - val_short_at_open))
+        cash_after_trades = prev_s.cash + net_cash_flow - (comm + slip)
         debt_after_trades = prev_s.debt
 
         if cash_after_trades < 0:

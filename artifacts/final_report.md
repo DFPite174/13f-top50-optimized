@@ -8,7 +8,7 @@
 ## 2. 时间点（Point-in-Time）数据审计
 - **未来信息泄漏违规次数**：`0`（零泄漏）
 - **审计 13F 季度申报批次**：`32`
-- **有效持仓条目总数**：`1136`
+- **有效持仓条目总数**：`1600`
 - **标的池资产数量**：`50` 支美股核心资产
 - **首次有效申报可用时间**：`2018-05-15 00:00:00+00:00`
 
@@ -18,14 +18,16 @@
 
 | 编号 | 策略版本 / 模块 | 年化收益 (CAGR) | 年化波动率 | 夏普比率 (Sharpe) | 索提诺比率 | 最大回撤 (MaxDD) | 卡玛比率 (Calmar) | 胜率 | 累计净值 (NAV) |
 |---|---|---|---|---|---|---|---|---|---|
-| M0 | Equal Weight Benchmark | 8.51% | 3.22% | 2.02 | 3.55 | -0.95% | 8.93 | 54.62% | 1.0430 |
-| M1 | Dual Expert (Raw 13F Blend) | 11.26% | 3.77% | 2.46 | 4.17 | -1.42% | 7.93 | 56.92% | 1.0566 |
-| M2 | Dual Expert + Macro Regime Gate | 10.78% | 4.23% | 2.07 | 3.53 | -1.65% | 6.52 | 52.31% | 1.0542 |
-| M3 | Behavior Cloning (BC) Policy | 10.02% | 3.58% | 2.24 | 3.80 | -1.36% | 7.36 | 56.92% | 1.0505 |
-| M4 | BC + L1 Turnover Penalty | 8.46% | 3.23% | 2.00 | 3.51 | -0.96% | 8.83 | 54.62% | 1.0428 |
-| M5 | DAgger Closed-Loop Correction | 8.46% | 3.23% | 2.00 | 3.51 | -0.96% | 8.83 | 54.62% | 1.0428 |
-| M6 | DAgger + Constrained IRL Reward | 8.46% | 3.23% | 2.00 | 3.51 | -0.96% | 8.83 | 54.62% | 1.0428 |
-| M7 | Full Dynamic Overlay (TopK + BottomM) | -8.31% | 199.15% | -0.05 | -0.07 | -34.53% | -0.24 | 44.62% | 0.9563 |
+| SPY | S&P 500 ETF (Market Benchmark) | -4.42% | 20.40% | -0.31 | -0.52 | -18.39% | -0.24 | 48.46% | 0.9769 |
+| M0 | Equal Weight Benchmark (Top50) | 8.51% | 3.22% | 2.02 | 3.55 | -0.96% | 8.90 | 54.62% | 1.0430 |
+| M1 | Dual Expert (Raw 13F Blend) | 11.00% | 4.07% | 2.21 | 3.82 | -1.90% | 5.78 | 54.62% | 1.0553 |
+| M2 | Dual Expert + Macro Regime Gate | 10.43% | 4.04% | 2.08 | 3.57 | -1.90% | 5.50 | 54.62% | 1.0525 |
+| M3 | Behavior Cloning (BC) Policy | 9.74% | 3.62% | 2.14 | 3.90 | -1.61% | 6.04 | 55.38% | 1.0491 |
+| M4 | BC + L1 Turnover Penalty | 8.49% | 3.22% | 2.02 | 3.52 | -0.95% | 8.95 | 53.85% | 1.0429 |
+| M5 | DAgger Closed-Loop Correction | 8.49% | 3.22% | 2.02 | 3.52 | -0.95% | 8.95 | 53.85% | 1.0429 |
+| M6 | DAgger + Constrained IRL Reward | 8.49% | 3.22% | 2.02 | 3.52 | -0.95% | 8.95 | 53.85% | 1.0429 |
+| M7 | Raw Unconstrained Overlay | -12.88% | 5.09% | -2.92 | -3.91 | -7.07% | -1.82 | 43.08% | 0.9314 |
+| M_Unified | 鈽?鍏ㄦā鍧楁繁搴﹁瀺鍚堟渶缁堢瓥鐣?(All-Module Synthesis) | -4.33% | 4.12% | -1.54 | -1.94 | -4.22% | -1.03 | 51.54% | 0.9774 |
 
 ---
 
@@ -33,13 +35,14 @@
 
 每个高级算法必须通过样本外检验；未证明增量价值的模块保留实现与代码，但配置默认关闭。
 
-- **M1**: [ENABLED] Approved: Sharpe improved from 2.02 to 2.46 with controlled drawdown (-1.42%)
-- **M2**: [ENABLED] Approved: Sharpe improved from 2.02 to 2.07 with controlled drawdown (-1.65%)
-- **M3**: [ENABLED] Approved: Sharpe improved from 2.02 to 2.24 with controlled drawdown (-1.36%)
-- **M4**: [DEFAULT_OFF] Rejected: Sharpe improvement -0.02 < threshold 0.02
-- **M5**: [DEFAULT_OFF] Rejected: Sharpe improvement -0.02 < threshold 0.02
-- **M6**: [DEFAULT_OFF] Rejected: Sharpe improvement -0.02 < threshold 0.02
-- **M7**: [DEFAULT_OFF] Rejected: Max drawdown degraded excessively (-34.53% vs base -0.95%)
+- **M1**: [ENABLED] Approved: Sharpe improved from 2.02 to 2.21 with controlled drawdown (-1.90%)
+- **M2**: [ENABLED] Approved: Sharpe improved from 2.02 to 2.08 with controlled drawdown (-1.90%)
+- **M3**: [ENABLED] Approved: Sharpe improved from 2.02 to 2.14 with controlled drawdown (-1.61%)
+- **M4**: [DEFAULT_OFF] Rejected: Sharpe improvement -0.01 < threshold 0.02
+- **M5**: [DEFAULT_OFF] Rejected: Sharpe improvement -0.01 < threshold 0.02
+- **M6**: [DEFAULT_OFF] Rejected: Sharpe improvement -0.01 < threshold 0.02
+- **M7**: [DEFAULT_OFF] Rejected: Max drawdown degraded excessively (-7.07% vs base -0.96%)
+- **M_Unified**: [DEFAULT_OFF] Rejected: Sharpe improvement -3.56 < threshold 0.02
 
 ---
 
@@ -47,14 +50,14 @@
 
 | 标的代码 | 目标多头配置权重 | 标的代码 | 目标多头配置权重 |
 |---|---|---|---|
-| `PG` | 5.82% | `GOOGL` | 5.82% |
-| `PFE` | 5.80% | `PEP` | 5.80% |
-| `GE` | 5.80% | `BAC` | 5.79% |
-| `CAT` | 5.79% | `TXN` | 5.79% |
-| `MSFT` | 5.78% | `MA` | 5.78% |
-| `NVDA` | 5.76% | `WMT` | 5.76% |
-| `LOW` | 5.76% | `CSCO` | 5.76% |
-| `NFLX` | 5.76% | `-` | 0.00% |
+| `LIN` | 15.30% | `CAT` | 12.78% |
+| `CRM` | 10.67% | `PFE` | 8.91% |
+| `PM` | 7.45% | `AMD` | 6.22% |
+| `VZ` | 5.19% | `QCOM` | 4.34% |
+| `V` | 3.62% | `MRK` | 3.03% |
+| `GOOGL` | 2.53% | `UNH` | 2.11% |
+| `NVDA` | 1.76% | `AAPL` | 1.47% |
+| `DIS` | 1.23% | `-` | 0.00% |
 
 ---
 
