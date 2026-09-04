@@ -70,14 +70,23 @@ def collect_dagger_rollout(
         current_date = simulator.dates[simulator.current_step]
         curr_state = simulator.current_state
 
-        # Dummy or synthesized state vector for test / simulator step
         # State: portfolio weights (num_assets) + cash (1) + exposure (1)
         holdings = curr_state.long_weights if len(curr_state.long_weights) == num_assets else np.zeros(num_assets)
         cash_ratio = curr_state.cash / (curr_state.equity + 1e-8)
         exp_ratio = curr_state.gross_exposure
-        state_vec = np.concatenate([holdings, [cash_ratio, exp_ratio]])
+        base_state = np.concatenate([holdings, [cash_ratio, exp_ratio]])
 
-        # 1. Policy generates action on currently visited state
+        # 1. Policy generates action on currently visited state (pad with zeros if policy expects market features)
+        if hasattr(policy, "trunk") and len(policy.trunk) > 0 and hasattr(policy.trunk[0], "in_features"):
+            in_dim = policy.trunk[0].in_features
+            if len(base_state) < in_dim:
+                pad = np.zeros(in_dim - len(base_state))
+                state_vec = np.concatenate([pad, base_state])
+            else:
+                state_vec = base_state
+        else:
+            state_vec = base_state
+
         t_state = torch.tensor(state_vec, dtype=torch.float32).unsqueeze(0)
         with torch.no_grad():
             p_out = policy(t_state)

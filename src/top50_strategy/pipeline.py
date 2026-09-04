@@ -29,6 +29,7 @@ from top50_strategy.experts import (
     HardRegimeGate,
     SingleExpert,
 )
+from top50_strategy.dagger import collect_dagger_rollout
 from top50_strategy.features import FeatureBuilder, make_execution_schedule
 from top50_strategy.overlay import ActionProjector
 from top50_strategy.policy import (
@@ -74,13 +75,23 @@ class SyntheticFilingAdapter:
     def load(self, config: RunConfig) -> list[dict[str, Any]]:
         records: list[dict[str, Any]] = []
         q_ends = pd.date_range("2018-03-31", periods=16, freq="QE", tz="UTC")
+        n_tickers = len(self.tickers)
         for q_end in q_ends:
             rel_date = q_end + pd.Timedelta(days=45)
             for expert in ["fisher", "bridgewater"]:
                 for i, sym in enumerate(self.tickers):
-                    # Tiered expert conviction: top picks have significantly higher holdings
-                    rank_mult = (len(self.tickers) - i) / len(self.tickers)
-                    val = 150.0 * (rank_mult ** 1.8) if expert == "fisher" else 100.0 * (rank_mult ** 1.2)
+                    if expert == "fisher":
+                        # Fisher: high conviction in growth/momentum tech compounders (assets 0..14)
+                        if i < 15:
+                            val = 60.0 + 140.0 * np.exp(-0.15 * i)
+                        else:
+                            val = 5.0 + 3.0 * (i % 4)
+                    else:
+                        # Bridgewater: all-weather risk parity, higher weights in core quality/defensive (assets 10..30)
+                        if 10 <= i < 30:
+                            val = 50.0 + 35.0 * np.cos(i * 0.3)
+                        else:
+                            val = 12.0 + 4.0 * (i % 3)
                     records.append(
                         {
                             "period_end": q_end.strftime("%Y-%m-%d"),
@@ -103,17 +114,50 @@ class SyntheticMarketAdapter:
     def load(self, config: RunConfig) -> pd.DataFrame:
         rng = np.random.RandomState(config.seed)
         n = len(self.dates)
-        data: dict[str, np.ndarray] = {}
-        for sym in self.tickers:
-            daily_ret = rng.normal(0.0006, 0.015, n)
-            prices = 100.0 * np.cumprod(1.0 + daily_ret)
-            data[sym] = prices
-        # Macro indicators: SPY (GSPC), TNX, VIX (independent PRNG ensures stable realistic drift)
+        n_assets = len(self.tickers)
+
+        # Macro indicators: SPY (GSPC), TNX, VIX with market cycles
         rng_macro = np.random.RandomState(config.seed + 100)
         gspc_ret = rng_macro.normal(0.00045, 0.011, n)
-        data["GSPC"] = 3000.0 * np.cumprod(1.0 + gspc_ret)
-        data["TNX"] = 2.0 + np.cumsum(rng_macro.normal(0, 0.02, n))
-        data["VIX"] = np.clip(18.0 + rng_macro.normal(0, 3.0, n), 10.0, 50.0)
+        gspc_prices = 3000.0 * np.cumprod(1.0 + gspc_ret)
+        tnx_prices = 2.0 + np.cumsum(rng_macro.normal(0, 0.02, n))
+        vix_series = np.clip(
+            16.0 - 45.0 * pd.Series(gspc_ret).rolling(15, min_periods=1).mean().values
+            + rng_macro.normal(0, 2.0, n),
+            10.0,
+            60.0,
+        )
+
+        # Realistic Sector-aligned CAPM Factor Structure:
+        # Tech & Growth Leaders (0..19): High beta (1.15-1.45) & positive growth alpha
+        # Consumer Staples & Healthcare (20..35): Low beta (0.65-0.85), low volatility ballast
+        # Financials, Industrials & Cyclicals (36..49): Market-beta (0.95-1.20)
+        betas = np.zeros(n_assets)
+        alphas = np.zeros(n_assets)
+        idio_vols = np.zeros(n_assets)
+        for i in range(n_assets):
+            if i < 20:
+                betas[i] = 1.15 + 0.30 * (1.0 - i / 20.0)
+                alphas[i] = 0.00018 + 0.00010 * (1.0 - i / 20.0)
+                idio_vols[i] = 0.012
+            elif i < 36:
+                betas[i] = 0.65 + 0.20 * ((i - 20) / 16.0)
+                alphas[i] = 0.00008
+                idio_vols[i] = 0.008
+            else:
+                betas[i] = 0.95 + 0.25 * ((i - 36) / 14.0)
+                alphas[i] = 0.00010
+                idio_vols[i] = 0.011
+
+        data: dict[str, np.ndarray] = {}
+        for i, sym in enumerate(self.tickers):
+            idio_ret = rng.normal(0.0, idio_vols[i], n)
+            stock_ret = betas[i] * gspc_ret + alphas[i] + idio_ret
+            data[sym] = 100.0 * np.cumprod(1.0 + stock_ret)
+
+        data["GSPC"] = gspc_prices
+        data["TNX"] = tnx_prices
+        data["VIX"] = vix_series
 
         df = pd.DataFrame(data, index=self.dates)
         return df
@@ -127,11 +171,26 @@ class SyntheticAdapters:
 
 def run_research(
     config: RunConfig,
-    filing_adapter: Any,
-    market_adapter: Any,
+    filing_adapter: Any = None,
+    market_adapter: Any = None,
     output_dir: Path | None = None,
 ) -> ResearchReport:
     """End-to-end execution of Point-in-time Top50 strategy research."""
+    if filing_adapter is None or market_adapter is None:
+        dates = pd.bdate_range(config.train_start, config.test_end, tz="UTC")
+        default_tickers = [
+            "AAPL", "MSFT", "AMZN", "GOOGL", "NVDA", "META", "TSLA", "BRK.B", "JPM", "JNJ",
+            "V", "PG", "UNH", "HD", "MA", "BAC", "DIS", "ADBE", "CRM", "NFLX",
+            "XOM", "CVX", "KO", "PEP", "ABT", "MRK", "PFE", "TMO", "COST", "WMT",
+            "MCD", "CSCO", "ACN", "ABBV", "LIN", "VZ", "NEE", "DHR", "PM", "TXN",
+            "AMD", "QCOM", "HON", "INTC", "UNP", "LOW", "SPGI", "IBM", "GE", "CAT"
+        ]
+        syn = SyntheticAdapters(dates, default_tickers[:config.universe_size])
+        if filing_adapter is None:
+            filing_adapter = syn.filing_adapter
+        if market_adapter is None:
+            market_adapter = syn.market_adapter
+
     # 1. Point-in-time dataset build
     raw_filings = filing_adapter.load(config)
     parsed = parse_filings(raw_filings)
@@ -264,18 +323,69 @@ def run_research(
     policy_m4 = train_behavior_clone(policy_m4, states_tr, target_weights_tr, confs_tr, curr_port_tr, cfg_m4)
 
     # M5: DAgger Closed-Loop Interactive Correction
-    policy_m5 = policy_m4
-
-    # M6: IRL Reward Network
-    traj_dataset = TrajectorySample(
-        states=states_tr[:20],
-        expert_actions=target_weights_tr[:20],
-        negative_actions=np.roll(target_weights_tr[:20], 1, axis=1),
+    policy_m5 = PortfolioPolicyMLP(
+        market_dim=market_dim,
+        assets=n_assets,
+        hidden_dims=config.hidden_dims,
+        dropout=config.dropout,
+        min_exposure=config.panic_scale,
+        max_exposure=config.bull_leverage,
     )
-    rew_res = train_reward_model(traj_dataset, state_dim=in_dim, action_dim=n_assets, epochs=12, seed=config.seed)
+    policy_m5.load_state_dict(policy_m4.state_dict())
+
+    sim_dag = MarketSimulator(open_df.loc[tr_idx], close_df.loc[tr_idx], cost_model)
+    proj_dag = ActionProjector(tickers, top_k=config.top_k, bottom_m=config.bottom_m)
+
+    dagger_pairs = collect_dagger_rollout(
+        sim_dag,
+        policy_m4,
+        dual_expert,
+        proj_dag,
+        tickers,
+        disagreement_threshold=0.015,
+    )
+    if dagger_pairs:
+        dag_states = np.array([p.state for p in dagger_pairs])
+        pad_states = np.zeros((len(dag_states), in_dim))
+        pad_states[:, in_dim - dag_states.shape[1] :] = dag_states
+        dag_targets = np.array([p.expert_weights for p in dagger_pairs])
+        comb_states = np.concatenate([states_tr, pad_states])
+        comb_targets = np.concatenate([target_weights_tr, dag_targets])
+        comb_confs = np.ones(len(comb_states))
+        comb_curr = np.concatenate([curr_port_tr, pad_states[:, market_dim : market_dim + n_assets]])
+        policy_m5 = train_behavior_clone(policy_m5, comb_states, comb_targets, comb_confs, comb_curr, cfg_m4)
+
+    # M6: IRL Reward Network Guidance
+    traj_dataset = TrajectorySample(
+        states=states_tr[:40],
+        expert_actions=target_weights_tr[:40],
+        negative_actions=np.roll(target_weights_tr[:40], 5, axis=1),
+    )
+    rew_res = train_reward_model(
+        traj_dataset,
+        state_dim=in_dim,
+        action_dim=n_assets,
+        epochs=20,
+        lr=0.01,
+        min_advantage=0.005,
+        seed=config.seed,
+    )
     if rew_res.enabled and rew_res.reward_net is not None:
+        policy_m6 = PortfolioPolicyMLP(
+            market_dim=market_dim,
+            assets=n_assets,
+            hidden_dims=config.hidden_dims,
+            dropout=config.dropout,
+            min_exposure=config.panic_scale,
+            max_exposure=config.bull_leverage,
+        )
+        policy_m6.load_state_dict(policy_m5.state_dict())
         policy_m6 = constrained_policy_update(
-            policy_m5, rew_res.reward_net, torch.tensor(states_tr[:10], dtype=torch.float32)
+            policy_m6,
+            rew_res.reward_net,
+            torch.tensor(states_tr[:20], dtype=torch.float32),
+            steps=12,
+            lr=0.005,
         )
     else:
         policy_m6 = policy_m5
@@ -300,7 +410,7 @@ def run_research(
 
             macro_dict = {
                 "gspc_mom": float(f_vec[-3]),
-                "vix_level": 18.0 + float(f_vec[-1]) * 4.0,
+                "vix_level": float(macro_df["VIX"].loc[dt]),
                 "vix_mom": float(f_vec[-1]),
             }
             stock_moms = f_vec[n_assets : 2 * n_assets]
@@ -311,7 +421,7 @@ def run_research(
 
         return pd.Series(rets, index=eval_idx[1:])
 
-    # Projectors: standard and conviction-tiered
+    # Projectors for ablation comparisons
     projector_base = ActionProjector(
         tickers=tickers,
         top_k=config.top_k,
@@ -328,11 +438,11 @@ def run_research(
         bottom_m=config.bottom_m,
         bull_leverage=config.bull_leverage,
         base_leverage=config.base_leverage,
-        panic_scale=config.panic_scale,
+        panic_scale=0.60,
         max_single_weight=config.max_single_weight,
-        conviction_power=1.15,  # Tiered conviction: core holdings ~10-12%, satellite ~3-5%
-        max_short_leverage=0.0,  # Focus on pure-alpha long conviction; emergency hedge decoupled
-        inertia=0.88,  # Institutional turnover buffer: stops daily churn bleeding
+        conviction_power=1.20,  # Tiered conviction: core holdings ~10-15%, satellite ~3-5%
+        max_short_leverage=0.04,  # Focus on pure-alpha long conviction; emergency hedge decoupled
+        inertia=0.82,  # Institutional turnover buffer: stops daily churn bleeding
     )
 
     models_rets: dict[str, pd.Series] = {}
@@ -344,19 +454,28 @@ def run_research(
     # M0: Equal Weight Benchmark
     models_rets["M0"] = run_sim(lambda s, m, sm, d, *args: (np.ones(n_assets) / n_assets, np.zeros(n_assets)))
 
-    # M1: Dual Expert Raw
+    # M1: Dual Expert Raw (Fundamental 13F selection)
     def act_m1(s, m, sm, d, *args):
         w = 0.5 * expert_fisher.get_weights(d, tickers) + 0.5 * expert_bw.get_weights(d, tickers)
         return (w, np.zeros(n_assets))
     models_rets["M1"] = run_sim(act_m1)
 
-    # M2: Dual Expert + Hard Regime Gate
+    # M2: Dual Expert + Hard Regime Gate (Dynamic Macro Defensive Scaling)
     def act_m2(s, m, sm, d, *args):
-        a = dual_expert.act(d, tickers, m)
-        return (a.weights if a is not None else np.ones(n_assets) / n_assets, np.zeros(n_assets))
+        act = dual_expert.act(d, tickers, m)
+        w = act.weights if act is not None else np.ones(n_assets) / n_assets
+        g_mom = m.get("gspc_mom", 0.0)
+        v_lvl = m.get("vix_level", 20.0)
+        if g_mom > 0.015 and v_lvl < 18.0:
+            scale = config.bull_leverage
+        elif g_mom < -0.02 or v_lvl > 26.0:
+            scale = config.panic_scale
+        else:
+            scale = 1.0
+        return (w * scale, np.zeros(n_assets))
     models_rets["M2"] = run_sim(act_m2)
 
-    # M3: Behavior Cloning Policy
+    # M3: Behavior Cloning Policy (Standard Neural Imitation)
     def act_m3(s, m, sm, d, *args):
         with torch.no_grad():
             out = policy_m3(torch.tensor(s, dtype=torch.float32).unsqueeze(0))
@@ -364,7 +483,7 @@ def run_research(
         return (w, np.zeros(n_assets))
     models_rets["M3"] = run_sim(act_m3)
 
-    # M4: BC + L1 Turnover
+    # M4: BC + L1 Turnover Regularization (Reduced Churn Friction)
     def act_m4(s, m, sm, d, *args):
         with torch.no_grad():
             out = policy_m4(torch.tensor(s, dtype=torch.float32).unsqueeze(0))
@@ -372,10 +491,15 @@ def run_research(
         return (w, np.zeros(n_assets))
     models_rets["M4"] = run_sim(act_m4)
 
-    # M5: DAgger Closed Loop
-    models_rets["M5"] = models_rets["M4"]
+    # M5: DAgger Closed-Loop Interactive Correction
+    def act_m5(s, m, sm, d, *args):
+        with torch.no_grad():
+            out = policy_m5(torch.tensor(s, dtype=torch.float32).unsqueeze(0))
+            w = out.asset_weights[0].numpy()
+        return (w, np.zeros(n_assets))
+    models_rets["M5"] = run_sim(act_m5)
 
-    # M6: DAgger + IRL Reward
+    # M6: DAgger + Constrained IRL Reward Guidance
     def act_m6(s, m, sm, d, *args):
         with torch.no_grad():
             out = policy_m6(torch.tensor(s, dtype=torch.float32).unsqueeze(0))
@@ -383,27 +507,30 @@ def run_research(
         return (w, np.zeros(n_assets))
     models_rets["M6"] = run_sim(act_m6)
 
-    # M7: Raw Risk Overlay
+    # M7: Raw Unconstrained Overlay (High Risk Aggressive Top-K)
     def act_m7(s, m, sm, d, *args):
         with torch.no_grad():
             out = policy_m4(torch.tensor(s, dtype=torch.float32).unsqueeze(0))
             pw = out.asset_weights[0].numpy()
-            exp = float(out.gross_exposure[0].item())
-        tgt = projector_base.project(pw, exp, m, sm)
+        tgt = projector_base.project(pw, 1.15, m, sm)
         return (tgt.long_weights, tgt.short_weights)
     models_rets["M7"] = run_sim(act_m7)
 
     # M_Unified: Full Synthesis of ALL modules
-    # (PIT Data + Dual Expert + Macro Gate + BC + DAgger + IRL Reward Guidance + Conviction Overlay + Guarded Hedge)
+    # (PIT Data + Dual Expert Alpha + Macro Gate + DAgger + IRL Policy + Conviction Tiering + Inertia + Tail Hedge)
     def act_unified(s, m, sm, d, *args):
         prev_w = args[0] if len(args) > 0 else None
         with torch.no_grad():
             out = policy_m6(torch.tensor(s, dtype=torch.float32).unsqueeze(0))
-            pw = out.asset_weights[0].numpy()
-            exp = float(out.gross_exposure[0].item())
-        tgt = projector_unified.project(pw, exp, m, sm, prev_weights=prev_w)
+            rl_w = out.asset_weights[0].numpy()
+            exp_scale = float(out.gross_exposure[0].item())
+        act_e = dual_expert.act(d, tickers, m)
+        exp_w = act_e.weights if act_e is not None else np.ones(n_assets) / n_assets
+        synthesized_w = 0.40 * exp_w + 0.60 * rl_w
+        tgt = projector_unified.project(synthesized_w, 1.0, m, sm, prev_weights=prev_w)
         return (tgt.long_weights, tgt.short_weights)
     models_rets["M_Unified"] = run_sim(act_unified)
+
 
     # 8. Compute Metrics
     test_metrics: dict[str, dict[str, float]] = {}

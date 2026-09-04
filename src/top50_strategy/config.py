@@ -1,4 +1,4 @@
-﻿"""Configuration dataclasses and validation for the Top50 strategy."""
+"""Configuration dataclasses and validation for the Top50 strategy."""
 
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -47,7 +47,7 @@ class RunConfig:
     disagreement_threshold: float = 0.08
     turnover_threshold: float = 0.30
 
-    reward_enabled: bool = False
+    reward_enabled: bool = True
     reward_hidden_dim: int = 64
     max_kl: float = 0.02
     max_turnover: float = 0.25

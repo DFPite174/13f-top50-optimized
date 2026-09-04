@@ -62,8 +62,8 @@ class ActionProjector:
         t_idx = s_idx[-self.top_k :]
 
         # Macro long scaling
-        is_bull = (gspc_mom > 0.02) and (vix_level < 18.0)
-        is_panic = (gspc_mom < -0.03) or (vix_level > 28.0) or (vix_mom > 0.20)
+        is_bull = (gspc_mom > 0.015) and (vix_level < 21.0)
+        is_panic = (gspc_mom < -0.025) or (vix_level > 26.0) or (vix_mom > 0.20)
 
         if is_panic:
             long_scale = self.panic_scale

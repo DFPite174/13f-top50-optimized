@@ -45,7 +45,7 @@ disagreement_threshold = 0.08
 turnover_threshold = 0.30
 
 [reward]
-enabled = false
+enabled = true
 reward_hidden_dim = 64
 max_kl = 0.02
 max_turnover = 0.25

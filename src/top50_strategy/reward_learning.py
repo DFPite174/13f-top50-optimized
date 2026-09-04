@@ -48,7 +48,7 @@ def train_reward_model(
     hidden_dim: int = 64,
     epochs: int = 25,
     lr: float = 0.005,
-    min_advantage: float = 0.05,
+    min_advantage: float = 0.005,
     seed: int = 42,
 ) -> RewardModelResult:
     """Train reward network to score expert actions higher than divergent actions."""

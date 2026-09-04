@@ -91,8 +91,9 @@ def behavior_cloning_loss(
     # 2. L1 turnover from actual current portfolio to target
     turnover_loss = torch.mean(torch.sum(torch.abs(predicted.asset_weights - current_weights), dim=-1))
 
-    # 3. Concentration penalty (sum of squared weights)
-    entropy_loss = torch.mean(torch.sum(predicted.asset_weights ** 2, dim=-1))
+    # 3. Shannon entropy regularization (minimizing w*log(w) maximizes entropy gently without forcing 1/N)
+    eps = 1e-8
+    entropy_loss = torch.mean(torch.sum(predicted.asset_weights * torch.log(predicted.asset_weights + eps), dim=-1))
 
     total = bc_loss + l1_turnover_weight * turnover_loss + entropy_weight * entropy_loss
     return LossComponents(
